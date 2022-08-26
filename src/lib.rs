@@ -15,7 +15,7 @@ pub struct Args {
 }
 
 #[derive(Debug, StructOpt)]
-#[structopt(about = "Operation to be performed by uapputil")]
+#[structopt(about = "Utilities for Ledx user-layer apps")]
 pub enum Command {
     #[structopt(about = "Generate LXML file")]
     Lxml {

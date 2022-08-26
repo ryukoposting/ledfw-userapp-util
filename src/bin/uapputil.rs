@@ -1,6 +1,6 @@
 use std::{convert::Infallible, error::Error, process::exit, io::Write};
 
-use btleplug::{platform::{Manager, Adapter}, api::{Manager as _, ScanFilter, Central, Peripheral, BDAddr}};
+use btleplug::{platform::{Manager, Adapter, PeripheralId}, api::{Manager as _, Peripheral as _, ScanFilter, Central, Peripheral, BDAddr}};
 use structopt::StructOpt;
 use tokio::time;
 use userapputil::{
@@ -68,9 +68,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 async fn run_writes(adapter: &Adapter, writes: &Vec<Vec<u8>>, name: &Option<String>, mac: &Option<BDAddr>) -> Result<bool,Box<dyn Error>> {
-    let app_svc_uuid = Uuid::parse_str("a2773100-e035-13ae-4647-0e0437dd272a").unwrap();
-    let prog_char_uuid = Uuid::parse_str("a2773101-e035-13ae-4647-0e0437dd272a").unwrap();
-
     println!("Starting scan on {}...", adapter.adapter_info().await?);
     adapter
         .start_scan(ScanFilter::default())
@@ -95,48 +92,63 @@ async fn run_writes(adapter: &Adapter, writes: &Vec<Vec<u8>>, name: &Option<Stri
 
         if name_matches && mac_matches {
             println!("Connecting to {} ({})", periph_name, periph_mac);
-            peripheral.connect().await?;
-
-            peripheral.discover_services().await?;
-
-            let services = peripheral.services();
-
-            let service = services.iter()
-                .filter(|svc| svc.uuid == app_svc_uuid)
-                .nth(0);
-
-            let service = if let Some(service) = service {
-                service
-            } else {
-                eprintln!("Warning: Device was found, but the userapp service was not found.");
-                continue;
-            };
-
-            let characteristic = service.characteristics.iter()
-                .filter(|chr| chr.uuid == prog_char_uuid)
-                .nth(0);
-
-            let characteristic = if let Some(characteristic) = characteristic {
-                characteristic
-            } else {
-                eprintln!("Warning: Device was found, but the userapp programming characteristic was not found.");
-                continue;
-            };
-
-            print!("Uploading:");
-            std::io::stdout().flush().unwrap();
-            for (i, data) in writes.iter().enumerate() {
-                let completion = (i + 1) as f64 * 100.0 / (writes.len() as f64);
-                print!("\rUploading: {completion:.01}%");
-                std::io::stdout().flush().unwrap();
-                peripheral.write(characteristic, data.as_slice(), btleplug::api::WriteType::WithResponse).await?;
+            let did_upload = upload(peripheral, writes).await;
+            if peripheral.is_connected().await? {
+                peripheral.disconnect().await?;
             }
-
-            peripheral.disconnect().await?;
+            if did_upload? {
+                return Ok(true)
+            }
         }
     }
 
     Ok(false)
+}
+
+async fn upload<P: Peripheral>(peripheral: &P, writes: &Vec<Vec<u8>>) -> Result<bool,Box<dyn Error>> {
+    let app_svc_uuid = Uuid::parse_str("a2773100-e035-13ae-4647-0e0437dd272a").unwrap();
+    let prog_char_uuid = Uuid::parse_str("a2773101-e035-13ae-4647-0e0437dd272a").unwrap();
+
+    peripheral.connect().await?;
+
+    time::sleep(time::Duration::from_secs(2)).await;
+
+    peripheral.discover_services().await?;
+
+    let services = peripheral.services();
+
+    let service = services.iter()
+        .filter(|svc| svc.uuid == app_svc_uuid)
+        .nth(0);
+
+    let service = if let Some(service) = service {
+        service
+    } else {
+        eprintln!("Warning: Device was found, but the userapp service was not found.");
+        return Ok(false)
+    };
+
+    let characteristic = service.characteristics.iter()
+        .filter(|chr| chr.uuid == prog_char_uuid)
+        .nth(0);
+
+    let characteristic = if let Some(characteristic) = characteristic {
+        characteristic
+    } else {
+        eprintln!("Warning: Device was found, but the userapp programming characteristic was not found.");
+        return Ok(false)
+    };
+
+    print!("Uploading:");
+    std::io::stdout().flush().unwrap();
+    for (i, data) in writes.iter().enumerate() {
+        let completion = (i + 1) as f64 * 100.0 / (writes.len() as f64);
+        print!("\rUploading: {completion:.01}%");
+        std::io::stdout().flush().unwrap();
+        peripheral.write(characteristic, data.as_slice(), btleplug::api::WriteType::WithResponse).await?;
+    }
+
+    Ok(true)
 }
 
 impl BleOutput {
