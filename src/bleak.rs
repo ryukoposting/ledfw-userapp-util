@@ -1,4 +1,4 @@
-use crate::{Command, OutputFormat};
+use crate::elf2ble::{BleCommand, OutputFormat};
 
 pub struct Bleak<W: std::io::Write> {
     out: W,
@@ -64,16 +64,17 @@ asyncio.run(main())
 
 impl<W: std::io::Write> OutputFormat for Bleak<W> {
     type Error = std::io::Error;
+    type Finish = ();
 
-    fn write_cmd<'s>(&mut self, cmd: Command<'s>) -> Result<(), Self::Error> {
+    fn write_cmd<'s>(&mut self, cmd: BleCommand<'s>) -> Result<(), Self::Error> {
         if !self.prelude_written {
             self.prelude_written = true;
             self.out.write_all(PRELUDE.as_bytes())?;
         }
 
         match cmd {
-            Command::Start => writeln!(self.out, "  [2],"),
-            Command::Write { offset, data } => {
+            BleCommand::Start => writeln!(self.out, "  [2],"),
+            BleCommand::Write { offset, data } => {
                 let offset_bytes = offset.to_le_bytes();
                 write!(self.out, "  [3, 0x{:02x}, 0x{:02x}, ", offset_bytes[0], offset_bytes[1])?;
 
@@ -83,10 +84,14 @@ impl<W: std::io::Write> OutputFormat for Bleak<W> {
 
                 writeln!(self.out, "],")
             },
-            Command::Commit { crc } => {
+            BleCommand::Commit { crc } => {
+                let crc_bytes = crc.to_le_bytes();
+                write!(self.out, "  [4, 0x{:02x}, 0x{:02x}],", crc_bytes[0], crc_bytes[1])
+            },
+            BleCommand::Run { crc } => {
                 let crc_bytes = crc.to_le_bytes();
                 write!(self.out, "  [5, 0x{:02x}, 0x{:02x}],", crc_bytes[0], crc_bytes[1])
-            }
+            },
         }
     }
 
